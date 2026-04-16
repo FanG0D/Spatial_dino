@@ -398,19 +398,28 @@ class SpatialResidualEncoder(pl.LightningModule):
     def forward(self, input: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Full forward pass."""
         return self.encode(input)
-
+    
     def get_input(self, batch: Dict, k: str) -> torch.Tensor:
         """
         Prepare input batch.
         Returns normalized image for DINO and DUSt3R.
         """
-        x = batch[k]
-        if len(x.shape) == 3:
-            x = x[..., None]
-        x = x.permute(0, 3, 1, 2).contiguous().float()
+        x = batch[k]  # Shape: (B, 3, H, W) from AirSim dataset
+
+        # x is already in (B, C, H, W) format from dataset's ToTensor()
+        # No need to permute
+
+        # Ensure float type
+        x = x.float()
 
         # Normalize for DINO (ImageNet normalization)
-        x_dino = (x + 1.0) / 2.0  # [-1, 1] -> [0, 1]
+        # Convert from [-1, 1] to [0, 1] if needed
+        if x.min() < 0:  # Data is in [-1, 1] range
+            x_dino = (x + 1.0) / 2.0  # [-1, 1] -> [0, 1]
+        else:
+            x_dino = x  # Already in [0, 1]
+
+        # Normalization
         mean = torch.tensor([0.485, 0.456, 0.406], device=x.device).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225], device=x.device).view(1, 3, 1, 1)
         x_dino = (x_dino - mean) / std
