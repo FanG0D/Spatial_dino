@@ -6,6 +6,8 @@ This project implements a **Spatial Residual Encoder** that learns spatial-aware
 
 The Spatial Residual Encoder combines frozen semantic features (DINOv3) with trainable residual features that are aligned to DUSt3R's 3D geometric representations. The key innovation is using Spatial Forcing to implicitly align residual features with DUSt3R's spatial features, enabling the learned latent space to capture both semantic information (from DINOv3) and spatial geometry (from DUSt3R).
 
+**Update**: Now supports training on AirSim drone simulation dataset with 224x224 resolution.
+
 ## Architecture
 
 ```
@@ -64,31 +66,35 @@ pip install -r requirements.txt
 
 ### Data Preparation
 
-1. Prepare ImageNet dataset:
+1. **Prepare AirSim Dataset**:
 ```bash
 # Update data_root in configs/spatial_residual_encoder.yaml
 data:
   params:
     train:
       params:
-        data_root: /path/to/imagenet
+        data_root: /mnt/disk_4/deyi/ANWM/data/airvln_16
     validation:
       params:
-        data_root: /path/to/imagenet
+        data_root: /mnt/disk_4/deyi/ANWM/data/airvln_16
 ```
+Dataset structure: `episode_folder/*.jpg` (e.g., `302OLP89E75X7MFPRR58QG7CIDVACC_processed/0.jpg`)
 
-2. Prepare DINOv3 weights:
+2. **Prepare DINOv3 weights**:
 ```bash
-# Download DINOv3 weights and update config
+# Update config with DINOv3 weights path
 dinov3_config:
-  weights_path: /path/to/dinov3_vits16plus_pretrain.pth
+  model_name: "dinov3_vits16"
+  weights_path: /mnt/disk_2/deyi/ANWM/models/dinov3-vits16
 ```
+Note: Uses `transformers.AutoModel.from_pretrained()` to load the model.
 
-3. Prepare DUSt3R weights (optional, for spatial supervision):
+3. **Prepare DUSt3R weights** (for spatial supervision):
 ```bash
-# Download DUSt3R weights and update config
+# Update config with DUSt3R paths
 dust3r_config:
-  model_path: /path/to/dust3r_checkpoint.pth
+  model_path: /mnt/disk_2/deyi/dust3r/checkpoints/DUSt3R_ViTLarge_BaseDecoder_224_linear.pth
+  dust3r_root: /mnt/disk_2/deyi/dust3r
 ```
 
 ### Launch Training
@@ -102,6 +108,12 @@ python main_residual_encoder.py \
 
 # Multi-GPU (8 GPUs)
 torchrun --standalone --nnodes 1 --nproc-per-node 8 \
+    main_residual_encoder.py \
+    --base configs/spatial_residual_encoder.yaml \
+    --train
+
+# Multi-GPU (specify which GPUs to use)
+CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --standalone --nnodes 1 --nproc-per-node 4 \
     main_residual_encoder.py \
     --base configs/spatial_residual_encoder.yaml \
     --train
@@ -130,14 +142,18 @@ Key hyperparameters in `configs/spatial_residual_encoder.yaml`:
 | `residual_config.num_layers` | 6 | ViT layers in residual encoder |
 | `residual_config.num_heads` | 8 | Number of attention heads |
 | `residual_config.hidden_dim` | 384 | Hidden dimension |
-| `batch_size` | 64 | Batch size per GPU |
-| `base_learning_rate` | 1e-4 | Base learning rate |
+| `residual_config.img_size` | 224 | Input image resolution |
+| `data.params.batch_size` | 64 | Batch size per GPU |
+| `model.base_learning_rate` | 1e-4 | Base learning rate |
 
 ## Project Structure
 
 ```
 Spatial_dino/
 ├── ldm/
+│   ├── data/
+│   │   ├── __init__.py
+│   │   └── airsim_dataset.py             # AirSim drone dataset loader
 │   ├── models/
 │   │   ├── __init__.py
 │   │   └── spatial_residual_encoder.py   # Main encoder model
@@ -148,6 +164,7 @@ Spatial_dino/
 ├── configs/
 │   └── spatial_residual_encoder.yaml     # Configuration
 ├── main_residual_encoder.py              # Training script
+├── test_airsim_dataset.py                # Dataset validation script
 ├── requirements.txt                      # Dependencies
 └── README.md                             # This file
 ```
@@ -171,15 +188,16 @@ from ldm.models.spatial_residual_encoder import SpatialResidualEncoder
 model = SpatialResidualEncoder(...)
 model.load_state_dict(torch.load("checkpoint.ckpt")["state_dict"])
 
-# Extract features
+# Extract features (for 224x224 input)
 features = model.extract_features(image)
 # Returns dict with:
-#   - 'dino': DINOv3 semantic features (384-dim)
-#   - 'residual': Raw residual features (8-dim)
-#   - 'residual_aligned': Distribution-aligned residual (8-dim)
-#   - 'spatial_teacher': DUSt3R features (768-dim)
-#   - 'latent': Concatenated [DINO, Residual] (392-dim)
+#   - 'dino': DINOv3 semantic features (B, 384, 196)
+#   - 'residual': Raw residual features (B, 8, 196)
+#   - 'residual_aligned': Distribution-aligned residual (B, 8, 196)
+#   - 'spatial_teacher': DUSt3R features (B, 768, 196)
+#   - 'latent': Concatenated [DINO, Residual] (B, 392, 196)
 ```
+Note: For 224x224 input with 16x16 patches, N = (224/16)^2 = 196 patches.
 
 ## References
 
