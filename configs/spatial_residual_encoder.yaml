@@ -12,18 +12,19 @@ model:
 
     # DINOv3 Configuration (Frozen Semantic Encoder)
     dinov3_config:
-      model_name: "dinov3_vits16plus"
-      weights_path: null  # Set to path of dinov3 weights
+      model_name: "dinov3_vits16"
+      weights_path: /mnt/disk_4/deyi/ANWM/models/dinov3-vits16  # Set to path of dinov3 weights
 
     # DUSt3R Configuration (Frozen Spatial Teacher)
     dust3r_config:
-      model_path: null  # Set to path of dust3r weights
+      model_path: /mnt/disk_4/deyi/dust3r/checkpoints/DUSt3R_ViTLarge_BaseDecoder_224_linear.pth
+      dust3r_root: /mnt/disk_4/deyi/dust3r
 
     # Residual Encoder Configuration (Trainable)
     residual_config:
       output_dim: 8
       patch_size: 16
-      img_size: 256
+      img_size: 224
       num_layers: 6
       num_heads: 8
       hidden_dim: 384
@@ -53,12 +54,12 @@ data:
       target: ldm.data.airsim_dataset.AirSimTrain
       params:
         data_root: /mnt/disk_4/deyi/ANWM/data/airvln_16
-        size: 256
+        size: 224
     validation:
       target: ldm.data.airsim_dataset.AirSimValidation
       params:
         data_root: /mnt/disk_4/deyi/ANWM/data/airvln_16
-        size: 256
+        size: 224
 
 lightning:
   trainer:

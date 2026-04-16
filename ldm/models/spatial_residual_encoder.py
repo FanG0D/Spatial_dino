@@ -8,6 +8,7 @@ Reference:
 - DUSt3R: https://github.com/naver/dust3r
 """
 
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -146,9 +147,10 @@ class DUSt3RWrapper(nn.Module):
     Keeps the model frozen and extracts pointmap-based features.
     """
 
-    def __init__(self, model_path: Optional[str] = None):
+    def __init__(self, model_path: Optional[str] = None, dust3r_root: Optional[str] = None):
         super().__init__()
         self.model_path = model_path
+        self.dust3r_root = dust3r_root or "/mnt/disk_2/deyi/dust3r"
         self.model = None
         self._load_model()
 
@@ -159,41 +161,47 @@ class DUSt3RWrapper(nn.Module):
                 param.requires_grad = False
 
     def _load_model(self):
-        """Load DUSt3R model. To be implemented based on actual DUSt3R setup."""
+        """Load DUSt3R model."""
         try:
-            # Placeholder: actual loading depends on DUSt3R installation
-            # from dust3r.model import AsymmetricCroCo3DStereo
-            # self.model = AsymmetricCroCo3DStereo.from_pretrained(self.model_path)
-            pass
+            # Add dust3r to path if needed
+            if self.dust3r_root not in sys.path:
+                sys.path.insert(0, self.dust3r_root)
+
+            from dust3r.model import AsymmetricCroCo3DStereo
+
+            if self.model_path:
+                self.model = AsymmetricCroCo3DStereo.from_pretrained(self.model_path)
+            else:
+                raise ValueError("model_path must be provided for DUSt3R")
+
         except Exception as e:
             print(f"Warning: Could not load DUSt3R model: {e}")
             print("Using placeholder for DUSt3R features")
+            self.model = None
 
     def forward(self, x):
         """
         Extract spatial features from input image.
-        Returns pointmap-based features in format (B, C, N) where N = H*W.
+        Args:
+            x: (B, 3, H, W) tensor in [0, 1] range
+        Returns: (B, 768, N) where N = H*W patches (DUSt3R ViT-L dimension)
         """
         if self.model is None:
-            # Placeholder: return random features for development
             B, C, H, W = x.shape
             N = (H // 16) * (W // 16)
             return torch.randn(B, 768, N, device=x.device)
 
         with torch.no_grad():
-            # Actual DUSt3R forward
-            outputs = self.model(x)
-            spatial_features = self._process_outputs(outputs)
-            # Ensure output is (B, C, N) format
-            if spatial_features.dim() == 4:
-                B, C, H, W = spatial_features.shape
-                spatial_features = spatial_features.view(B, C, H * W)
+            # Compute true_shape for DUSt3R
+            B, C, H, W = x.shape
+            true_shape = torch.tensor([[H, W]] * B, device=x.device)
 
-        return spatial_features
+            # Use _encode_image to get features
+            feat, _, _ = self.model._encode_image(x, true_shape)
+            # feat: (B, N, 768) -> transpose to (B, 768, N)
+            feat = feat.transpose(1, 2)
 
-    def _process_outputs(self, outputs):
-        """Process DUSt3R outputs to spatial features."""
-        return outputs
+        return feat
 
 
 class DINOv3Wrapper(nn.Module):
@@ -209,24 +217,25 @@ class DINOv3Wrapper(nn.Module):
         self.model = None
         self.feature_dim = 384  # DINOv3 ViT-S feature dimension
         self.patch_size = 16
+        self.num_reg = 0  # Number of register tokens
         self._load_model()
 
     def _load_model(self):
-        """Load DINOv3 model."""
+        """Load DINOv3 model using transformers.AutoModel."""
         try:
+            from transformers import AutoModel
+
             if self.weights_path:
-                self.model = torch.hub.load(
-                    repo_or_dir="/path/to/dinov3",
-                    model=self.model_name,
-                    source="local",
-                    weights=self.weights_path,
-                )
+                self.model = AutoModel.from_pretrained(self.weights_path)
             else:
-                raise NotImplementedError("DINOv3 loading not implemented")
+                raise ValueError("weights_path must be provided for DINOv3")
 
             self.model.eval()
             for param in self.model.parameters():
                 param.requires_grad = False
+
+            # Get number of register tokens (DINOv2/v3 have registers)
+            self.num_reg = getattr(self.model.config, 'num_register_tokens', 0)
 
         except Exception as e:
             print(f"Warning: Could not load DINOv3 model: {e}")
@@ -235,7 +244,9 @@ class DINOv3Wrapper(nn.Module):
 
     def forward(self, x):
         """Extract semantic features from input image.
-        Returns: (B, feature_dim, N) where N = H*W (e.g., 256 for 16x16 patches)
+        Args:
+            x: (B, 3, H, W) tensor, ImageNet normalized
+        Returns: (B, feature_dim, N) where N = H*W (e.g., 196 for 224x224 with 16x16 patches)
         """
         if self.model is None:
             B, _, H, W = x.shape
@@ -243,13 +254,15 @@ class DINOv3Wrapper(nn.Module):
             return torch.randn(B, self.feature_dim, N, device=x.device)
 
         with torch.no_grad():
-            outputs = self.model.forward_features(x)
-            if isinstance(outputs, dict):
-                features = outputs['x_norm_patchtokens']
-            else:
-                features = outputs
+            # Use transformers API
+            outputs = self.model(pixel_values=x)
+            # last_hidden_state: (B, 1+num_reg+N, D) where 1 is cls token
+            features = outputs.last_hidden_state
 
-            # features: (B, N, D) -> transpose to (B, D, N) to match SVG format
+            # Remove cls token and register tokens: [:, 1+num_reg:, :]
+            features = features[:, 1 + self.num_reg:, :]  # (B, N, D)
+
+            # Transpose to (B, D, N) format to match SVG
             features = features.transpose(1, 2)  # (B, feature_dim, N)
 
         return features
