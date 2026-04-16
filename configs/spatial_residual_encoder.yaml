@@ -50,14 +50,14 @@ data:
     batch_size: 64
     num_workers: 4
     train:
-      target: ldm.data.imagenet.ImageNetTrain
+      target: ldm.data.airsim_dataset.AirSimTrain
       params:
-        data_root: /path/to/imagenet
+        data_root: /mnt/disk_4/deyi/ANWM/data/airvln_16
         size: 256
     validation:
-      target: ldm.data.imagenet.ImageNetValidation
+      target: ldm.data.airsim_dataset.AirSimValidation
       params:
-        data_root: /path/to/imagenet
+        data_root: /mnt/disk_4/deyi/ANWM/data/airvln_16
         size: 256
 
 lightning:
